@@ -2,7 +2,7 @@ name: CI/CD - Docker Hub & Render
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "main" ]
   workflow_dispatch:
 
 env:
@@ -12,8 +12,13 @@ jobs:
   build_push_deploy:
     runs-on: ubuntu-latest
 
-    permissions:
-      contents: read
+    # Inyectamos secrets a env a nivel de job (seguros y disponibles en steps)
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
 
     steps:
       - name: Checkout
@@ -25,8 +30,8 @@ jobs:
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
 
       - name: Compute tags
         id: meta
@@ -47,26 +52,47 @@ jobs:
           cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache,mode=max
 
       # ─────────────────────────────────────────────────────────────
-      # Opción A (simple): Render Deploy Hook
+      # Deploy via Deploy Hook (simple)
       # ─────────────────────────────────────────────────────────────
       - name: Deploy to Render via Deploy Hook (imgURL = sha tag)
-        if: ${{ success() && secrets.RENDER_DEPLOY_HOOK != '' }}
+        shell: bash
         run: |
+          set -euo pipefail
+          if [ -z "${RENDER_DEPLOY_HOOK:-}" ]; then
+            echo "RENDER_DEPLOY_HOOK no está definido. Omitiendo deploy por Hook."
+            exit 0
+          fi
+
           IMG_URL="docker.io/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}"
-          # Si tu hook ya trae query (?key=...), usa "&imgURL=", si no, usa "?imgURL="
-          # Ajusta la siguiente línea si tu hook no tiene querystring:
-          curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}&imgURL=${IMG_URL}"
+          HOOK="${RENDER_DEPLOY_HOOK}"
+
+          if [[ "$HOOK" == *"?"* ]]; then
+            URL="${HOOK}&imgURL=${IMG_URL}"
+          else
+            URL="${HOOK}?imgURL=${IMG_URL}"
+          fi
+
+          echo "Disparando deploy hook con imgURL=${IMG_URL}"
+          curl -fsS -X POST "$URL"
 
       # ─────────────────────────────────────────────────────────────
-      # Opción B (avanzada): Render REST API
+      # Deploy via Render API (avanzado)
       # ─────────────────────────────────────────────────────────────
-      - name: Deploy to Render via API (imgUrl)
-        if: ${{ success() && secrets.RENDER_API_KEY != '' && secrets.RENDER_SERVICE_ID != '' }}
+      - name: Deploy to Render via API (imageUrl)
+        shell: bash
         run: |
+          set -euo pipefail
+          if [ -z "${RENDER_API_KEY:-}" ] || [ -z "${RENDER_SERVICE_ID:-}" ]; then
+            echo "RENDER_API_KEY o RENDER_SERVICE_ID no están definidos. Omitiendo deploy por API."
+            exit 0
+          fi
+
           IMG_URL="docker.io/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}"
+          echo "Creando deploy por API con imageUrl=${IMG_URL}"
+
           curl -fsS -X POST \
-            "https://api.render.com/v1/services/${{ secrets.RENDER_SERVICE_ID }}/deploys" \
+            "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys" \
             -H "Accept: application/json" \
-            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
             -H "Content-Type: application/json" \
             -d "{\"clearCache\":false, \"imageUrl\":\"${IMG_URL}\"}"
