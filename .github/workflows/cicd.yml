@@ -2,7 +2,7 @@ name: CI/CD - Docker Hub & Render
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "main" ]
   workflow_dispatch:
 
 env:
@@ -43,27 +43,25 @@ jobs:
           tags: |
             ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.latest_tag }}
             ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}
-          # cache opcional:
           cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
           cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache,mode=max
 
       # ─────────────────────────────────────────────────────────────
       # Opción A (simple): Render Deploy Hook
-      # Usa tu Deploy Hook URL y (opcionalmente) fuerza una imagen específica
-      # con el parámetro imgURL=<registry>/<repo>:<tag>
       # ─────────────────────────────────────────────────────────────
       - name: Deploy to Render via Deploy Hook (imgURL = sha tag)
-        if: success() && secrets.RENDER_DEPLOY_HOOK != ''
+        if: ${{ success() && secrets.RENDER_DEPLOY_HOOK != '' }}
         run: |
           IMG_URL="docker.io/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}"
+          # Si tu hook ya trae query (?key=...), usa "&imgURL=", si no, usa "?imgURL="
+          # Ajusta la siguiente línea si tu hook no tiene querystring:
           curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}&imgURL=${IMG_URL}"
 
       # ─────────────────────────────────────────────────────────────
       # Opción B (avanzada): Render REST API
-      # Requiere RENDER_API_KEY y RENDER_SERVICE_ID; despliega con el tag sha.
       # ─────────────────────────────────────────────────────────────
       - name: Deploy to Render via API (imgUrl)
-        if: success() && secrets.RENDER_API_KEY != '' && secrets.RENDER_SERVICE_ID != ''
+        if: ${{ success() && secrets.RENDER_API_KEY != '' && secrets.RENDER_SERVICE_ID != '' }}
         run: |
           IMG_URL="docker.io/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}"
           curl -fsS -X POST \
